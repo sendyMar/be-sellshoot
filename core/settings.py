@@ -43,6 +43,12 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'corsheaders',
+    # SellShoot Apps
+    'apps.authentication',
+    'apps.extraction',
+    'apps.catalog',
+    'apps.tasks',
+    'apps.reporting',
 ]
 
 MIDDLEWARE = [
