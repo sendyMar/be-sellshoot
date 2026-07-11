@@ -96,7 +96,7 @@ def process_screenshot(screenshot_instance):
 
         # 3. Konfigurasi model
         model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
+            model_name="gemini-2.0-flash",
             system_instruction=SYSTEM_INSTRUCTION,
             generation_config=genai.GenerationConfig(
                 response_mime_type="application/json",
