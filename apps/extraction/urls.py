@@ -1,14 +1,10 @@
 from django.urls import path
+from .views import ScreenshotUploadView, ScreenshotListView, ScreenshotDeleteView
 
 app_name = 'extraction'
 
 urlpatterns = [
-    # POST   /api/extraction/upload/              — Upload screenshot (multi-file)
-    # GET    /api/extraction/screenshots/          — List screenshot hari ini
-    # DELETE /api/extraction/screenshots/<id>/     — Hapus screenshot
-    # POST   /api/extraction/process/              — Proses screenshot dengan Gemini
-    # GET    /api/extraction/results/<id>/         — Hasil ekstraksi per screenshot
-    # GET    /api/extraction/today/                — Semua hasil ekstraksi hari ini
-    # GET    /api/extraction/review/               — Data review (grouped by confidence)
-    # POST   /api/extraction/review/verify/        — Batch verifikasi/koreksi
+    path('upload/', ScreenshotUploadView.as_view(), name='screenshot_upload'),
+    path('screenshots/', ScreenshotListView.as_view(), name='screenshot_list'),
+    path('screenshots/<int:pk>/', ScreenshotDeleteView.as_view(), name='screenshot_delete'),
 ]
