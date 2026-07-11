@@ -27,6 +27,7 @@ class ScreenshotListView(APIView):
     def get(self, request):
         screenshots = get_today_screenshots(request.user)
         serializer = ScreenshotReadSerializer(screenshots, many=True)
+
         return Response({'success': True, 'data': serializer.data})
 
 class ScreenshotDeleteView(APIView):
@@ -37,3 +38,92 @@ class ScreenshotDeleteView(APIView):
         if success:
             return Response({'success': True, 'message': 'Screenshot deleted'})
         return Response({'success': False, 'message': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+
+
+class ScreenshotProcessView(APIView):
+    """Trigger AI processing untuk screenshot yang masih pending"""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        """
+        Body (opsional): { "screenshot_ids": [1, 2, 3] }
+        Jika kosong, proses semua screenshot pending milik user hari ini
+        """
+        from .ai_service import process_screenshot
+        from .models import Screenshot
+
+        screenshot_ids = request.data.get('screenshot_ids', None)
+
+        if screenshot_ids:
+            screenshots = Screenshot.objects.filter(
+                user=request.user, id__in=screenshot_ids, status='pending'
+            )
+        else:
+            from django.utils import timezone
+            today = timezone.now().date()
+            screenshots = Screenshot.objects.filter(
+                user=request.user, status='pending', uploaded_at__date=today
+            )
+
+        results = []
+        errors = []
+
+        import time
+        from google.api_core.exceptions import ResourceExhausted
+
+        for idx, ss in enumerate(screenshots):
+            try:
+                # Beri jeda antar request agar tidak menabrak limit (Gemini Free Tier: 15 RPM)
+                if idx > 0:
+                    time.sleep(4)
+                
+                max_retries = 3
+                retry_count = 0
+                
+                while retry_count < max_retries:
+                    try:
+                        result = process_screenshot(ss)
+                        results.append({
+                            'screenshot_id': ss.id,
+                            'status': 'processed',
+                            'items_count': result.items.count(),
+                        })
+                        break # Keluar dari loop retry jika berhasil
+                    except ResourceExhausted as e:
+                        retry_count += 1
+                        if retry_count >= max_retries:
+                            raise e # Lempar exception jika sudah maksimal retry
+                        # Exponential backoff jika kena 429
+                        time.sleep(10 * retry_count)
+            except Exception as e:
+                errors.append({
+                    'screenshot_id': ss.id,
+                    'status': 'failed',
+                    'error': str(e),
+                })
+
+        return Response({
+            'success': True,
+            'message': f'{len(results)} screenshot berhasil diproses, {len(errors)} gagal',
+            'data': {
+                'processed': results,
+                'failed': errors,
+            }
+        })
+
+class ExtractionTodayView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        from .models import ExtractionResult
+        from django.utils import timezone
+        from .serializers import ExtractionResultSerializer
+        
+        today = timezone.now().date()
+        results = ExtractionResult.objects.filter(
+            screenshot__user=request.user, 
+            processed_at__date=today
+        ).order_by('-processed_at')
+        
+        serializer = ExtractionResultSerializer(results, many=True)
+        return Response({'success': True, 'data': serializer.data})
