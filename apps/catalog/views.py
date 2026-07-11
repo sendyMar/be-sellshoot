@@ -21,6 +21,14 @@ class ProductListCreateView(generics.ListCreateAPIView):
         serializer.save(user=self.request.user)
 
 
+class ProductDetailView(generics.RetrieveUpdateDestroyAPIView):
+    serializer_class = ProductSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        return Product.objects.filter(user=self.request.user)
+
+
 class ProductAliasListView(generics.ListAPIView):
     serializer_class = ProductAliasSerializer
     permission_classes = [IsAuthenticated]
