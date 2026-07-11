@@ -2,7 +2,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.utils import timezone
-from apps.extraction.models import Screenshot
+from ..extraction.models import Screenshot
 import calendar
 from datetime import date, datetime
 

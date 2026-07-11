@@ -1,10 +1,8 @@
 from django.urls import path
-
-app_name = 'tasks'
+from .views import TaskGenerateView, TaskListView, TaskUpdateView
 
 urlpatterns = [
-    # POST  /api/tasks/generate/    — Generate task dari data verified
-    # GET   /api/tasks/             — List task (filterable)
-    # PATCH /api/tasks/<id>/        — Toggle status task
-    # GET   /api/tasks/summary/     — Ringkasan task hari ini
+    path('', TaskListView.as_view(), name='task-list'),
+    path('generate/', TaskGenerateView.as_view(), name='task-generate'),
+    path('<int:pk>/', TaskUpdateView.as_view(), name='task-update'),
 ]
