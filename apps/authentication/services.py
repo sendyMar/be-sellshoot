@@ -9,7 +9,7 @@ def verify_or_create_user(token):
     try:
         # Verify the token
         client_id = os.getenv('GOOGLE_CLIENT_ID')
-        idinfo = id_token.verify_oauth2_token(token, requests.Request(), client_id)
+        idinfo = id_token.verify_oauth2_token(token, requests.Request(), client_id, clock_skew_in_seconds=10)
 
         if idinfo['iss'] not in ['accounts.google.com', 'https://accounts.google.com']:
             raise ValueError('Wrong issuer.')

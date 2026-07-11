@@ -1,13 +1,9 @@
 from django.urls import path
-
-app_name = 'catalog'
+from .views import ProductListCreateView, ProductAliasListView, MatchProductView, ConfirmMatchView
 
 urlpatterns = [
-    # GET    /api/catalog/products/               — List semua produk user
-    # POST   /api/catalog/products/               — Buat produk baru
-    # GET    /api/catalog/products/<id>/aliases/   — List alias per produk
-    # POST   /api/catalog/match/                  — Cari kecocokan nama produk
-    # POST   /api/catalog/match/confirm/          — Konfirmasi kecocokan
-    # POST   /api/catalog/match/reject/           — Tolak kecocokan
-    # GET    /api/catalog/matching-log/           — Riwayat pemetaan
+    path('products/', ProductListCreateView.as_view(), name='product-list-create'),
+    path('products/<int:product_id>/aliases/', ProductAliasListView.as_view(), name='product-alias-list'),
+    path('match/', MatchProductView.as_view(), name='match-product'),
+    path('match/confirm/', ConfirmMatchView.as_view(), name='confirm-match'),
 ]
