@@ -69,11 +69,10 @@ class ScreenshotProcessView(APIView):
         errors = []
 
         import time
-        from google.api_core.exceptions import ResourceExhausted
 
         for idx, ss in enumerate(screenshots):
             try:
-                # Beri jeda antar request agar tidak menabrak limit (Gemini Free Tier: 15 RPM)
+                # Beri jeda antar request agar tidak menabrak limit API
                 if idx > 0:
                     time.sleep(4)
                 
@@ -88,12 +87,14 @@ class ScreenshotProcessView(APIView):
                             'status': 'processed',
                             'items_count': result.items.count(),
                         })
-                        break # Keluar dari loop retry jika berhasil
-                    except ResourceExhausted as e:
+                        break  # Keluar dari loop retry jika berhasil
+                    except Exception as retry_error:
+                        error_str = str(retry_error).lower()
+                        is_rate_limit = '429' in error_str or 'rate' in error_str or 'limit' in error_str or 'quota' in error_str
                         retry_count += 1
-                        if retry_count >= max_retries:
-                            raise e # Lempar exception jika sudah maksimal retry
-                        # Exponential backoff jika kena 429
+                        if retry_count >= max_retries or not is_rate_limit:
+                            raise retry_error
+                        # Exponential backoff jika kena rate limit
                         time.sleep(10 * retry_count)
             except Exception as e:
                 errors.append({

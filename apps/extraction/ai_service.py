@@ -1,8 +1,8 @@
-import google.generativeai as genai
 import os
 import requests
-from io import BytesIO
-from PIL import Image
+import base64
+import json
+from groq import Groq
 
 # ── System Instruction ──────────────
 SYSTEM_INSTRUCTION = """
@@ -17,103 +17,95 @@ ATURAN KETAT:
    dan set screenshot_readable = false.
 4. Semua harga dalam Rupiah (tanpa "Rp" prefix, hanya angka).
 5. Nama produk ditulis PERSIS seperti yang terlihat di screenshot, jangan disingkat/ubah.
-"""
+6. KAMU WAJIB MENGEMBALIKAN OUTPUT DALAM FORMAT JSON STRICT BERDASARKAN SKEMA BERIKUT.
+   JANGAN MENGEMBALIKAN APAPUN SELAIN JSON OBJECT (TANPA MARKDOWN ```json).
 
-# ── Schema JSON ──────────────────────────────────
-EXTRACTION_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "screenshot_readable": {
-            "type": "boolean",
-            "description": "Apakah screenshot dapat dibaca dengan jelas"
-        },
-        "platform_detected": {
-            "type": "string",
-            "enum": ["shopee", "tokopedia", "instagram", "other", "unknown"],
-            "description": "Platform yang terdeteksi dari tampilan UI screenshot"
-        },
-        "screenshot_type": {
-            "type": "string",
-            "enum": ["order_list", "order_detail", "product_stock", "chat", "content_performance", "other"],
-            "description": "Jenis halaman yang di-screenshot"
-        },
-        "items": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "product_name": {"type": "string"},
-                    "quantity": {"type": "integer"},
-                    "price": {"type": "number"},
-                    "status": {
-                        "type": "string",
-                        "enum": ["perlu_tindakan", "diproses", "selesai", "dikirim", "dibatalkan", "lainnya"]
-                    },
-                    "order_id": {"type": "string"},
-                    "buyer_name": {"type": "string"},
-                    "notes": {"type": "string"},
-                    "confidence": {
-                        "type": "number",
-                        "description": "Confidence score 0.0-1.0 seberapa yakin data ini benar"
-                    }
-                },
-                "required": ["product_name", "confidence"]
-            }
-        },
-        "overall_confidence": {
-            "type": "number",
-            "description": "Confidence keseluruhan untuk seluruh screenshot (0.0-1.0)"
-        },
-        "failure_reason": {
-            "type": "string",
-            "description": "Alasan jika screenshot gagal dibaca (opsional)"
-        }
-    },
-    "required": ["screenshot_readable", "platform_detected", "screenshot_type", "items", "overall_confidence"]
+SKEMA JSON YANG DIHARAPKAN:
+{
+  "screenshot_readable": boolean,
+  "platform_detected": "shopee" | "tokopedia" | "instagram" | "other" | "unknown",
+  "screenshot_type": "order_list" | "order_detail" | "product_stock" | "chat" | "content_performance" | "other",
+  "overall_confidence": float (0.0-1.0),
+  "items": [
+    {
+      "product_name": string,
+      "quantity": integer,
+      "price": float,
+      "status": "perlu_tindakan" | "diproses" | "selesai" | "dikirim" | "dibatalkan" | "lainnya",
+      "order_id": string,
+      "buyer_name": string,
+      "notes": string,
+      "confidence": float (0.0-1.0)
+    }
+  ]
 }
-
+"""
 
 def process_screenshot(screenshot_instance):
     """
-    Memproses satu screenshot menggunakan Gemini Vision API.
+    Memproses satu screenshot menggunakan Groq API (Llama 3.2 90B Vision).
     """
     from .models import ExtractionResult, ExtractedItem
 
-    # Pastikan API key sudah dikonfigurasi. Kalau belum, konfigurasi di sini.
-    api_key = os.getenv('GEMINI_API_KEY')
+    api_key = os.getenv('GROQ_API_KEY')
     if not api_key:
-        raise ValueError("GEMINI_API_KEY tidak ditemukan di environment variables")
-    genai.configure(api_key=api_key)
+        raise ValueError("GROQ_API_KEY tidak ditemukan di environment variables")
+        
+    client = Groq(api_key=api_key)
 
     try:
         # 1. Download gambar dari UploadThing URL
         response = requests.get(screenshot_instance.image_url, timeout=30)
         response.raise_for_status()
-        image_bytes = BytesIO(response.content)
+        
+        # 2. Konversi ke Base64 (Syarat wajib untuk Groq API Vision)
+        image_content_type = response.headers.get('Content-Type', 'image/jpeg')
+        base64_image = base64.b64encode(response.content).decode('utf-8')
+        image_url_data = f"data:{image_content_type};base64,{base64_image}"
 
-        # 2. Upload ke Gemini sebagai inline data
-        image = Image.open(image_bytes)
-
-        # 3. Konfigurasi model
-        model = genai.GenerativeModel(
-            model_name="gemini-2.0-flash",
-            system_instruction=SYSTEM_INSTRUCTION,
-            generation_config=genai.GenerationConfig(
-                response_mime_type="application/json",
-                response_schema=EXTRACTION_SCHEMA,
-                temperature=0.1,  # Rendah → lebih deterministik & konsisten
-            )
-        )
-
-        # 4. Kirim ke Gemini
+        # 3. Kirim ke Groq API
         user_prompt = (
             f"Ekstrak semua data order/produk dari screenshot dashboard {screenshot_instance.platform} berikut. "
-            f"Screenshot ini diupload oleh seller pada {screenshot_instance.uploaded_at.strftime('%Y-%m-%d %H:%M')}."
+            f"Screenshot ini diupload pada {screenshot_instance.uploaded_at.strftime('%Y-%m-%d %H:%M')}. "
+            "PENTING: Pastikan Anda hanya merespons dengan JSON Object murni."
         )
 
-        import json
-        gemini_response = model.generate_content([user_prompt, image])
-        result_data = json.loads(gemini_response.text)
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {
+                    "role": "system",
+                    "content": SYSTEM_INSTRUCTION
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": user_prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": image_url_data,
+                            },
+                        },
+                    ],
+                }
+            ],
+            model="qwen/qwen3.6-27b",
+            temperature=0.1,
+            max_tokens=4096,
+            response_format={"type": "json_object"}
+        )
+
+        # 4. Ambil dan parse JSON hasil Groq
+        response_text = chat_completion.choices[0].message.content
+        result_data = json.loads(response_text)
+
+        # Menghandle apabila Llama membungkusnya dalam nested key tambahan (fallback)
+        if "items" not in result_data:
+            result_data["items"] = []
+            for key, val in result_data.items():
+                if isinstance(val, list):
+                    result_data["items"] = val
+                    break
 
         # 5. Simpan hasil ke database
         extraction_result = ExtractionResult.objects.create(
@@ -133,7 +125,7 @@ def process_screenshot(screenshot_instance):
                 buyer_name=item_data.get('buyer_name', ''),
                 notes=item_data.get('notes', ''),
                 confidence=item_data.get('confidence', 0.0),
-                is_verified=item_data.get('confidence', 0.0) >= 0.85,  # Auto-verify jika tinggi
+                is_verified=item_data.get('confidence', 0.0) >= 0.85,
             )
 
         # 7. Update status screenshot
@@ -146,7 +138,6 @@ def process_screenshot(screenshot_instance):
         return extraction_result
 
     except Exception as e:
-        # Tandai screenshot sebagai gagal
         screenshot_instance.status = 'failed'
         screenshot_instance.save()
         raise e
