@@ -7,6 +7,7 @@ class ScreenshotCreateSerializer(serializers.Serializer):
         allow_empty=False
     )
     platform = serializers.ChoiceField(choices=Screenshot.PLATFORM_CHOICES)
+    tag = serializers.ChoiceField(choices=Screenshot.TAG_CHOICES, required=False, default='order_list')
     upload_session = serializers.UUIDField()
 
 class ScreenshotReadSerializer(serializers.ModelSerializer):

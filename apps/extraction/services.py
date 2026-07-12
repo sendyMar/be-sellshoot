@@ -1,13 +1,14 @@
 from .models import Screenshot
 
-def save_screenshots(user, image_urls, platform, session_id):
+def save_screenshots(user, image_urls, platform, session_id, tag='order_list'):
     screenshots = []
     for url in image_urls:
         screenshot = Screenshot(
             user=user,
             image_url=url,
             platform=platform,
-            upload_session=session_id
+            upload_session=session_id,
+            tag=tag
         )
         screenshots.append(screenshot)
     

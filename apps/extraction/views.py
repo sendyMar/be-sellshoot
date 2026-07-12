@@ -14,8 +14,9 @@ class ScreenshotUploadView(APIView):
             image_urls = serializer.validated_data['image_urls']
             platform = serializer.validated_data['platform']
             upload_session = serializer.validated_data['upload_session']
+            tag = serializer.validated_data.get('tag', 'order_list')
 
-            save_screenshots(request.user, image_urls, platform, upload_session)
+            save_screenshots(request.user, image_urls, platform, upload_session, tag)
             
             return Response({'success': True, 'message': 'Screenshots saved successfully'}, status=status.HTTP_201_CREATED)
         

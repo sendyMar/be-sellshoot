@@ -4,42 +4,58 @@ import base64
 import json
 from groq import Groq
 
-# ── System Instruction ──────────────
-SYSTEM_INSTRUCTION = """
-Kamu adalah asisten AI untuk aplikasi SellShoot, sebuah operational co-pilot untuk
-seller marketplace Indonesia. Tugasmu adalah mengekstrak informasi dari screenshot
-dashboard seller marketplace (Shopee, Tokopedia, Instagram, dll).
-
-ATURAN KETAT:
-1. Hanya ekstrak data yang BENAR-BENAR terlihat di screenshot. JANGAN mengarang data.
-2. Jika sebagian teks tidak terbaca jelas, tandai dengan confidence rendah (< 0.5).
-3. Jika screenshot tidak berisi data order/produk yang relevan, kembalikan items kosong
-   dan set screenshot_readable = false.
-4. Semua harga dalam Rupiah (tanpa "Rp" prefix, hanya angka).
-5. Nama produk ditulis PERSIS seperti yang terlihat di screenshot, jangan disingkat/ubah.
-6. KAMU WAJIB MENGEMBALIKAN OUTPUT DALAM FORMAT JSON STRICT BERDASARKAN SKEMA BERIKUT.
-   JANGAN MENGEMBALIKAN APAPUN SELAIN JSON OBJECT (TANPA MARKDOWN ```json).
-
-SKEMA JSON YANG DIHARAPKAN:
+# ── System Instructions ──────────────
+BASE_JSON_SCHEMA = """
 {
   "screenshot_readable": boolean,
   "platform_detected": "shopee" | "tokopedia" | "instagram" | "other" | "unknown",
-  "screenshot_type": "order_list" | "order_detail" | "product_stock" | "chat" | "content_performance" | "other",
   "overall_confidence": float (0.0-1.0),
+  "narrative": "string (Berikan deskripsi detail tentang temuan dari gambar ini secara naratif. Jika ada hal yang perlu ditindaklanjuti seperti stok habis, pesanan urgent, atau komplain, jelaskan di sini.)",
   "items": [
     {
-      "product_name": string,
-      "quantity": integer,
-      "price": float,
-      "status": "perlu_tindakan" | "diproses" | "selesai" | "dikirim" | "dibatalkan" | "lainnya",
-      "order_id": string,
-      "buyer_name": string,
-      "notes": string,
-      "confidence": float (0.0-1.0)
+      "product_name": "string",
+      "quantity": "integer",
+      "price": "float",
+      "status": "perlu_tindakan | diproses | selesai | dikirim | dibatalkan | lainnya",
+      "order_id": "string",
+      "buyer_name": "string",
+      "notes": "string",
+      "confidence": "float (0.0-1.0)"
     }
   ]
 }
 """
+
+PROMPTS = {
+    'order_list': f"""Kamu adalah asisten AI untuk SellShoot. Tugasmu mengekstrak data dari screenshot DAFTAR PESANAN.
+ATURAN KETAT:
+1. Hanya ekstrak data yang BENAR-BENAR terlihat di screenshot. JANGAN mengarang data.
+2. Isi atribut 'narrative' dengan analisa menyeluruh tentang daftar pesanan ini.
+3. Semua harga dalam Rupiah (tanpa "Rp" prefix).
+4. KAMU WAJIB MENGEMBALIKAN OUTPUT DALAM FORMAT JSON STRICT.
+SKEMA JSON: {BASE_JSON_SCHEMA}""",
+
+    'order_detail': f"""Kamu adalah asisten AI untuk SellShoot. Tugasmu mengekstrak data dari screenshot DETAIL PESANAN.
+ATURAN KETAT:
+1. Hanya ekstrak data yang BENAR-BENAR terlihat.
+2. Isi atribut 'narrative' dengan detail penting seperti catatan khusus dari pembeli atau status pengiriman.
+3. KAMU WAJIB MENGEMBALIKAN OUTPUT DALAM FORMAT JSON STRICT.
+SKEMA JSON: {BASE_JSON_SCHEMA}""",
+
+    'product_stock': f"""Kamu adalah asisten AI untuk SellShoot. Tugasmu mengekstrak data dari screenshot STOK PRODUK.
+ATURAN KETAT:
+1. Hanya ekstrak data yang BENAR-BENAR terlihat.
+2. Isi atribut 'narrative' dengan temuan stok (misal: stok mana yang menipis atau habis).
+3. KAMU WAJIB MENGEMBALIKAN OUTPUT DALAM FORMAT JSON STRICT.
+SKEMA JSON: {BASE_JSON_SCHEMA}""",
+
+    'chat': f"""Kamu adalah asisten AI untuk SellShoot. Tugasmu mengekstrak data dari screenshot CHAT PELANGGAN.
+ATURAN KETAT:
+1. Hanya ekstrak data yang BENAR-BENAR terlihat.
+2. Isi atribut 'narrative' dengan inti percakapan, komplain, atau permintaan pelanggan.
+3. KAMU WAJIB MENGEMBALIKAN OUTPUT DALAM FORMAT JSON STRICT.
+SKEMA JSON: {BASE_JSON_SCHEMA}"""
+}
 
 def process_screenshot(screenshot_instance):
     """
@@ -64,8 +80,11 @@ def process_screenshot(screenshot_instance):
         image_url_data = f"data:{image_content_type};base64,{base64_image}"
 
         # 3. Kirim ke Groq API
+        tag = getattr(screenshot_instance, 'tag', 'order_list')
+        system_instruction = PROMPTS.get(tag, PROMPTS['order_list'])
+
         user_prompt = (
-            f"Ekstrak semua data order/produk dari screenshot dashboard {screenshot_instance.platform} berikut. "
+            f"Ekstrak data dari screenshot {screenshot_instance.platform} berikut yang bertipe '{tag}'. "
             f"Screenshot ini diupload pada {screenshot_instance.uploaded_at.strftime('%Y-%m-%d %H:%M')}. "
             "PENTING: Pastikan Anda hanya merespons dengan JSON Object murni."
         )
@@ -74,7 +93,7 @@ def process_screenshot(screenshot_instance):
             messages=[
                 {
                     "role": "system",
-                    "content": SYSTEM_INSTRUCTION
+                    "content": system_instruction
                 },
                 {
                     "role": "user",
@@ -111,6 +130,7 @@ def process_screenshot(screenshot_instance):
         extraction_result = ExtractionResult.objects.create(
             screenshot=screenshot_instance,
             raw_ai_response=result_data,
+            narrative=result_data.get('narrative', '')
         )
 
         # 6. Parse items ke ExtractedItem

@@ -1,10 +1,11 @@
 from django.urls import path
-from .views import CalendarStatusView
+from .views import CalendarStatusView, DailyReportView
 
 app_name = 'reporting'
 
 urlpatterns = [
     path('calendar-status/', CalendarStatusView.as_view(), name='calendar-status'),
+    path('daily/', DailyReportView.as_view(), name='daily-report'),
     # POST /api/reporting/snapshot/     — Buat snapshot harian
     # GET  /api/reporting/snapshots/    — List snapshot
     # POST /api/reporting/weekly/       — Generate laporan mingguan

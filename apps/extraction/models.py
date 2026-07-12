@@ -8,21 +8,29 @@ class Screenshot(models.Model):
         ('instagram', 'Instagram'),
         ('other', 'Lainnya'),
     ]
+    TAG_CHOICES = [
+        ('order_list', 'Daftar Pesanan'),
+        ('order_detail', 'Detail Pesanan'),
+        ('product_stock', 'Stok Produk'),
+        ('chat', 'Chat Pelanggan'),
+    ]
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     image_url = models.URLField(max_length=500)
     platform = models.CharField(max_length=20, choices=PLATFORM_CHOICES)
+    tag = models.CharField(max_length=50, choices=TAG_CHOICES, default='order_list')
     upload_session = models.UUIDField()
     status = models.CharField(max_length=20, default='pending') # pending, processed, failed
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"{self.platform} - {self.upload_session}"
+        return f"{self.platform} ({self.tag}) - {self.upload_session}"
 
 
 class ExtractionResult(models.Model):
     """Hasil ekstraksi AI dari satu screenshot"""
     screenshot = models.ForeignKey(Screenshot, on_delete=models.CASCADE, related_name='results')
     raw_ai_response = models.JSONField(null=True, blank=True)  # Backup respons mentah Gemini
+    narrative = models.TextField(blank=True, null=True)        # Narasi / konteks hasil ekstraksi
     processed_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

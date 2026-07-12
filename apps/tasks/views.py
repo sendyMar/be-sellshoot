@@ -66,9 +66,19 @@ class TaskUpdateView(APIView):
         task = get_object_or_404(Task, pk=pk, user=request.user)
         
         is_completed = request.data.get('is_completed')
+        description = request.data.get('description')
+        
+        has_changed = False
         if is_completed is not None:
             task.is_completed = is_completed
             task.completed_at = timezone.now() if is_completed else None
+            has_changed = True
+            
+        if description is not None:
+            task.description = description
+            has_changed = True
+            
+        if has_changed:
             task.save()
             
         return Response({'success': True, 'message': 'Task updated successfully'})

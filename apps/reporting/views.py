@@ -78,3 +78,56 @@ class CalendarStatusView(APIView):
             "month": month,
             "days": days_status
         })
+
+class DailyReportView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        date_str = request.query_params.get('date')
+        if not date_str:
+            target_date = timezone.now().date()
+        else:
+            target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+            
+        from .models import DailyReport
+        
+        try:
+            report = DailyReport.objects.get(user=request.user, date=target_date)
+            return Response({
+                "success": True,
+                "data": {
+                    "date": report.date,
+                    "total_orders": report.total_orders,
+                    "total_tasks": report.total_tasks,
+                    "completed_tasks": report.completed_tasks,
+                    "ai_insight": report.ai_insight
+                }
+            })
+        except DailyReport.DoesNotExist:
+            return Response({"success": False, "message": "Report not found for this date"})
+            
+    def post(self, request):
+        date_str = request.data.get('date')
+        if not date_str:
+            target_date = timezone.now().date()
+        else:
+            target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+            
+        from .ai_report_service import generate_daily_report_insight
+        
+        try:
+            report = generate_daily_report_insight(request.user, target_date)
+            return Response({
+                "success": True,
+                "data": {
+                    "date": report.date,
+                    "total_orders": report.total_orders,
+                    "total_tasks": report.total_tasks,
+                    "completed_tasks": report.completed_tasks,
+                    "ai_insight": report.ai_insight
+                }
+            })
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response({"success": False, "message": str(e)}, status=500)

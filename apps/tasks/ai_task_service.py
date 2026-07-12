@@ -2,98 +2,114 @@ import os
 import json
 from groq import Groq
 from django.utils import timezone
-from ..extraction.models import ExtractedItem
+from ..extraction.models import ExtractionResult
 from ..tasks.models import Task
 
-SYSTEM_PROMPT = """Kamu adalah 'SellShoot Operational Manager', asisten cerdas untuk penjual online (seller).
-Tugasmu adalah menganalisis data riwayat aktivitas/pesanan hari ini, lalu menyusun DAFTAR TUGAS (To-Do List) yang harus diselesaikan oleh seller.
-
+SYSTEM_PROMPT_FLOW_1 = """Kamu adalah 'SellShoot Operational Manager'. Tugasmu menganalisis narasi ekstrasi gambar DAFTAR/DETAIL PESANAN lintas platform (Cross-Platform Order Management).
 ATURAN:
-1. Kelompokkan pesanan yang sama dari platform yang sama menjadi satu tugas (misal: "Proses 5 pesanan Kemeja Flanel dari Shopee").
-2. Berikan prioritas "urgent" untuk pesanan yang perlu segera diproses atau chat keluhan pelanggan.
-3. Berikan prioritas "normal" untuk tugas operasional standar.
-4. JANGAN membuat tugas untuk pesanan yang statusnya sudah "selesai" atau "dibatalkan", kecuali ada catatan khusus.
-5. Wajib mengembalikan respons dalam format JSON murni sesuai skema berikut. JANGAN MENGEMBALIKAN TEKS LAIN.
-
+1. Wajib mengonsolidasikan semua pesanan menjadi sesedikit mungkin task (ideal 1 task utama untuk packing/pengiriman).
+2. Di dalam kolom 'description', gunakan format MARKDOWN LIST bersarang (poin dan sub-poin) untuk merinci pesanan.
+3. Susun hierarki deskripsi wajib seperti ini:
+   - Nama Produk / Kategori
+     - Varian (Ukuran/Warna) | Qty | Asal Platform (Shopee, Tokopedia, dll)
+       - *Catatan/Pesan Khusus:* (Tampilkan jika ada pesanan khusus dari pembeli)
+4. Gabungkan informasi dari Daftar Pesanan dan Detail Pesanan menjadi satu kesatuan (Cross-Platform).
+5. Wajib mengembalikan respons dalam format JSON murni.
 SKEMA JSON:
 {
   "tasks": [
     {
-      "title": "string (Singkat, jelas, maks 60 karakter)",
-      "description": "string (Penjelasan detail jika perlu)",
-      "category": "order" | "restock" | "reply_chat" | "packing" | "other",
+      "title": "Semua barang yang perlu dikirimkan (atau judul relevan lain)",
+      "description": "Deskripsi berbasis Markdown point & sub-point yang mengelompokkan produk, varian, kuantitas, platform, dan catatan khusus.",
+      "category": "order",
+      "priority": "urgent" | "normal" | "low",
+      "platform": "semua"
+    }
+  ]
+}"""
+
+SYSTEM_PROMPT_FLOW_2 = """Kamu adalah 'SellShoot Operational Manager'. Tugasmu menganalisis narasi ekstrasi gambar STOK PRODUK dan CHAT PELANGGAN.
+ATURAN:
+1. Analisa apakah ada stok yang perlu diupdate/restock, atau komplain pelanggan yang perlu segera dibalas.
+2. Wajib mengembalikan respons dalam format JSON murni.
+SKEMA JSON:
+{
+  "tasks": [
+    {
+      "title": "Singkat dan jelas",
+      "description": "Deskripsi detail tentang stok yang habis atau keluhan pelanggan",
+      "category": "restock" | "reply_chat" | "other",
       "priority": "urgent" | "normal" | "low",
       "platform": "shopee" | "tokopedia" | "instagram" | "semua"
     }
   ]
 }"""
 
-def generate_tasks_from_verified_data(user, date=None):
-    if not date:
-        date = timezone.now().date()
-        
-    # 1. Kumpulkan semua extracted item yang sudah diverifikasi hari itu
-    items = ExtractedItem.objects.filter(
-        extraction_result__screenshot__user=user,
-        extraction_result__processed_at__date=date,
-        is_verified=True
-    ).select_related('extraction_result__screenshot')
-    
-    if not items.exists():
-        return {"success": True, "count": 0, "message": "Tidak ada data terverifikasi untuk diproses."}
-        
-    # 2. Format data untuk AI
-    data_hari_ini = []
-    for item in items:
-        # Hanya masukkan item yang belum selesai
-        if item.status.lower() not in ['selesai', 'dibatalkan']:
-            data_hari_ini.append({
-                "produk": item.product_name,
-                "qty": item.quantity or 1,
-                "status": item.status,
-                "platform": item.extraction_result.screenshot.platform,
-                "catatan": item.notes
-            })
-            
-    if not data_hari_ini:
-        return {"success": True, "count": 0, "message": "Semua pesanan sudah selesai/dibatalkan."}
-        
-    user_prompt = {
-        "tanggal": str(date),
-        "data_hari_ini": data_hari_ini
-    }
-    
-    # 3. Panggil Groq API
+def call_groq_for_tasks(system_prompt, user_data_json):
     api_key = os.getenv('GROQ_API_KEY')
     if not api_key:
         raise ValueError("GROQ_API_KEY tidak ditemukan di environment variables")
         
     client = Groq(api_key=api_key)
-    
     model_name = os.getenv('GROQ_TASK_MODEL', 'llama-3.3-70b-versatile')
     
     chat_completion = client.chat.completions.create(
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": json.dumps(user_prompt)}
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_data_json}
         ],
         model=model_name,
         temperature=0.1,
+        max_tokens=4096,
         response_format={"type": "json_object"}
     )
     
     response_text = chat_completion.choices[0].message.content
     try:
-        result_data = json.loads(response_text)
+        return json.loads(response_text).get('tasks', [])
     except Exception as e:
-        raise Exception(f"Gagal parse JSON dari Groq: {str(e)}")
+        print(f"Gagal parse JSON dari Groq: {str(e)}")
+        return []
+
+def generate_tasks_from_verified_data(user, date=None):
+    if not date:
+        date = timezone.now().date()
         
-    tasks_to_create = result_data.get('tasks', [])
+    # Ambil SEMUA ExtractionResult hari ini untuk user (bypassing verification per user requirement)
+    extractions = ExtractionResult.objects.filter(
+        screenshot__user=user,
+        processed_at__date=date
+    ).select_related('screenshot')
     
-    # 4. Hapus task yang belum selesai di hari yang sama agar tidak menumpuk duplikat saat di-generate ulang
+    if not extractions.exists():
+        return {"success": True, "count": 0, "message": "Tidak ada data ekstraksi hari ini."}
+        
+    data_flow_1 = []
+    data_flow_2 = []
+    
+    for ext in extractions:
+        narrative = ext.narrative or "Tidak ada narasi eksplisit."
+        if ext.screenshot.tag in ['order_list', 'order_detail']:
+            data_flow_1.append({"platform": ext.screenshot.platform, "narasi": narrative})
+        elif ext.screenshot.tag in ['product_stock', 'chat']:
+            data_flow_2.append({"platform": ext.screenshot.platform, "narasi": narrative})
+
+    tasks_to_create = []
+    
+    # Process Flow 1 (Order Management)
+    if data_flow_1:
+        user_prompt_1 = json.dumps({"tanggal": str(date), "data_pesanan": data_flow_1})
+        tasks_to_create.extend(call_groq_for_tasks(SYSTEM_PROMPT_FLOW_1, user_prompt_1))
+        
+    # Process Flow 2 (Inventory & CS)
+    if data_flow_2:
+        user_prompt_2 = json.dumps({"tanggal": str(date), "data_operasional": data_flow_2})
+        tasks_to_create.extend(call_groq_for_tasks(SYSTEM_PROMPT_FLOW_2, user_prompt_2))
+        
+    # Hapus task yang belum selesai di hari yang sama agar tidak duplikat
     Task.objects.filter(user=user, date=date, is_completed=False).delete()
     
-    # 5. Simpan ke database
+    # Simpan ke database
     created_tasks = []
     for task_data in tasks_to_create:
         category = task_data.get('category', 'other')
@@ -115,4 +131,4 @@ def generate_tasks_from_verified_data(user, date=None):
         )
         created_tasks.append(task)
         
-    return {"success": True, "count": len(created_tasks), "tasks": created_tasks}
+    return {"success": True, "count": len(created_tasks), "tasks": [t.title for t in created_tasks]}
