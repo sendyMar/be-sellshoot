@@ -35,9 +35,31 @@ class TaskListView(APIView):
         date_str = request.query_params.get('date')
         if date_str:
             target_date = date_str
+            # Convert to date object for applies_to check
+            from datetime import datetime
+            parsed_date = datetime.strptime(date_str, '%Y-%m-%d').date()
         else:
-            target_date = timezone.now().date().isoformat()
+            parsed_date = timezone.now().date()
+            target_date = parsed_date.isoformat()
             
+        # Instantiate custom tasks if needed
+        from .models import CustomTaskTemplate
+        templates = CustomTaskTemplate.objects.filter(user=request.user)
+        for t in templates:
+            if t.applies_to(parsed_date):
+                Task.objects.get_or_create(
+                    user=request.user,
+                    date=target_date,
+                    custom_template=t,
+                    defaults={
+                        'title': t.title,
+                        'description': t.description,
+                        'priority': t.priority,
+                        'category': 'custom',
+                        'platform': 'semua'
+                    }
+                )
+                
         tasks = Task.objects.filter(user=request.user, date=target_date).order_by('is_completed', '-priority', '-created_at')
         
         # Manual serialization
@@ -82,3 +104,28 @@ class TaskUpdateView(APIView):
             task.save()
             
         return Response({'success': True, 'message': 'Task updated successfully'})
+
+class CustomTaskTemplateView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        from .models import CustomTaskTemplate
+        title = request.data.get('title')
+        description = request.data.get('description', '')
+        priority = request.data.get('priority', 'normal')
+        recurrence_type = request.data.get('recurrence_type', 'daily')
+        weekly_days = request.data.get('weekly_days', [])
+        
+        if not title:
+            return Response({'success': False, 'message': 'Title is required'}, status=400)
+            
+        template = CustomTaskTemplate.objects.create(
+            user=request.user,
+            title=title,
+            description=description,
+            priority=priority,
+            recurrence_type=recurrence_type,
+            weekly_days=weekly_days
+        )
+        
+        return Response({'success': True, 'message': 'Custom task created successfully', 'id': template.id})
