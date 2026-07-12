@@ -131,3 +131,19 @@ class DailyReportView(APIView):
             import traceback
             traceback.print_exc()
             return Response({"success": False, "message": str(e)}, status=500)
+
+class StatisticsView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        from .analytics_service import get_user_analytics
+        try:
+            data = get_user_analytics(request.user)
+            return Response({
+                "success": True,
+                "data": data
+            })
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response({"success": False, "message": str(e)}, status=500)
